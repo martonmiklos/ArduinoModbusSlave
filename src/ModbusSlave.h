@@ -19,7 +19,15 @@
 #define MODBUSSLAVE_H
 #include <Arduino.h>
 
+#define RE_PORT PORTD
+#define RE_DDR DDRD
+#define RE_PIN 4
+
 #define MAX_BUFFER 64
+
+#define MODBUS_UNIT_ID_MIN 1
+#define MODBUS_UNIT_ID_MAX 247
+#define MODBUS_UNIT_ID_DEFAULT 42
 
 /**
  * Modbus function codes
@@ -70,8 +78,7 @@ typedef uint8_t (*CallBackFunc)(uint8_t, uint16_t, uint16_t);
  */
 class Modbus {
 public:
-    Modbus(uint8_t unitID, int ctrlPin);
-    Modbus(Stream &serial, uint8_t unitID, int ctrlPin);
+    Modbus(Stream &serial, uint8_t unitID);
     void begin(unsigned long boud);
     int poll();
     int readCoilFromBuffer(int offset);
@@ -79,6 +86,9 @@ public:
     void writeCoilToBuffer(int offset, int state);
     void writeRegisterToBuffer(int offset, uint16_t value);
     uint8_t writeStringToBuffer(int offset, uint8_t *str, uint8_t length);
+
+	void setUnitId(uint8_t _unitID);
+	uint8_t unitID() const {return m_unitID;}
 
     CallBackFunc cbVector[CB_MAX];
 private:
@@ -88,8 +98,7 @@ private:
     uint16_t last_receive_len;
     uint16_t calcCRC(uint8_t *buf, int length);
 
-    int ctrlPin = -1;
-    uint8_t unitID;
+    uint8_t m_unitID;
     uint8_t bufIn[MAX_BUFFER];
     uint8_t bufOut[MAX_BUFFER];
 };

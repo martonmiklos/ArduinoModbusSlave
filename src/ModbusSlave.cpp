@@ -19,15 +19,6 @@
 #include <string.h>
 #include "ModbusSlave.h"
 
-/**
- * Init the modbus object.
- *
- * @param unitID the modbus slave id.
- * @param ctrlPin the digital out pin for RS485 read/write control.
- */
-Modbus::Modbus(uint8_t _unitID, int _ctrlPin)
-:Modbus(Serial, _unitID, _ctrlPin)
-{}
 
 /**
  * Init the modbus object.
@@ -36,15 +27,13 @@ Modbus::Modbus(uint8_t _unitID, int _ctrlPin)
  * @param unitID the modbus slave id.
  * @param ctrlPin the digital out pin for RS485 read/write control.
  */
-Modbus::Modbus(Stream &_serial, uint8_t _unitID, int _ctrlPin)
+Modbus::Modbus(Stream &_serial, uint8_t _unitID)
 :serial(_serial)
 {
     // set modbus slave unit id
-    unitID = _unitID;
+    m_unitID = _unitID;
 
     // set control pin for 485 write.
-    ctrlPin = _ctrlPin;
-
     //Initialize variables
     timeout = 0;
     last_receive_time = 0;
@@ -56,21 +45,19 @@ Modbus::Modbus(Stream &_serial, uint8_t _unitID, int _ctrlPin)
  *
  * @param boud the serial port boud rate.
  */
-void Modbus::begin(unsigned long boud) {
+void Modbus::begin(unsigned long baud) {
     // set control pin
-    if (ctrlPin >= 0) {
-        pinMode(ctrlPin, OUTPUT);
-    }
+    RE_DDR |= (1<<RE_PIN);
 
     // set the timeout for 3.5 chars.
     serial.setTimeout(0);
 
     // set the T35 interframe timeout
-    if (boud > 19200) {
+    if (baud > 19200) {
         timeout = 1750;
     }
     else {
-        timeout = 35000000 / boud; // 1T * 3.5 = T3.5
+        timeout = 35000000 / baud; // 1T * 3.5 = T3.5
     }
 
     // init last received values
@@ -86,7 +73,8 @@ void Modbus::begin(unsigned long boud) {
  *
  * @return the calculated CRC16.
  */
-uint16_t Modbus::calcCRC(uint8_t *buf, int length) {
+uint16_t Modbus::calcCRC(uint8_t *buf, int length) 
+{
     int i, j;
     uint16_t crc = 0xFFFF;
     uint16_t tmp;
@@ -110,7 +98,8 @@ uint16_t Modbus::calcCRC(uint8_t *buf, int length) {
 /**
  * wait for end of frame, parse request and answer it.
  */
-int Modbus::poll() {
+int Modbus::poll() 
+{
     int lengthIn;
     int lengthOut = 0;
     uint16_t crc;
@@ -119,7 +108,7 @@ int Modbus::poll() {
     uint16_t available_len;
     uint8_t fc;
     uint8_t cb_status;
-    uint8_t error = STATUS_OK;
+    uint8_t currentError = STATUS_OK;
 
     /**
      * Read one data frame:
@@ -150,7 +139,7 @@ int Modbus::poll() {
     }
 
     // check unit-id
-    if (bufIn[0] != unitID) return 0;
+    if (bufIn[0] != m_unitID) return 0;
 
     /**
      * Validate buffer.
@@ -179,7 +168,7 @@ int Modbus::poll() {
         case FC_READ_INPUT_REGISTERS: // read input registers (analog in)
             // sanity check.
             if (length > MAX_BUFFER) {
-                error = STATUS_ILLEGAL_DATA_ADDRESS;
+                currentError = STATUS_ILLEGAL_DATA_ADDRESS;
                 // as long as I am not using gotos at all 
                 // in case of protocol handling they are usefull for 
                 // cleaning up when it comes to cleaning up
@@ -206,7 +195,7 @@ int Modbus::poll() {
         case FC_WRITE_MULTIPLE_COILS:
             // sanity check.
             if (length > MAX_BUFFER) {
-                error = STATUS_ILLEGAL_DATA_ADDRESS;
+                currentError = STATUS_ILLEGAL_DATA_ADDRESS;
                 // as long as I am not using gotos at all 
                 // in case of protocol handling they are usefull for 
                 // cleaning up when it comes to cleaning up
@@ -226,7 +215,7 @@ int Modbus::poll() {
         case FC_WRITE_MULTIPLE_REGISTERS:
             // sanity check.
             if (length > MAX_BUFFER) {
-                error = STATUS_ILLEGAL_DATA_ADDRESS;
+                currentError = STATUS_ILLEGAL_DATA_ADDRESS;
                 goto respond;
             }
 
@@ -240,7 +229,7 @@ int Modbus::poll() {
         default:
             // unknown command
             // TODO respond with exeption 01 (illegal function)
-            error = STATUS_ILLEGAL_FUNCTION;
+            currentError = STATUS_ILLEGAL_FUNCTION;
             goto respond;
     }
 
@@ -348,12 +337,12 @@ int Modbus::poll() {
     /**
      * Build answer
      */
-    bufOut[0] = unitID;
+    bufOut[0] = m_unitID;
     bufOut[1] = fc;
     
-    if (error != STATUS_OK) { // error code should have higher priotity over callback
+    if (currentError != STATUS_OK) { // error code should have higher priotity over callback
         bufOut[1] |= 0x80;
-        bufOut[2] = error;
+        bufOut[2] = currentError;
         lengthOut = 5;
     } else if (cb_status != STATUS_OK) {
         bufOut[1] |= 0x80;
@@ -369,22 +358,17 @@ int Modbus::poll() {
     /**
      * Transmit
      */
-    if (ctrlPin >= 0) {
-        // set rs485 control pin to write
-        digitalWrite(ctrlPin, HIGH);
+    // set rs485 control pin to write
+	RE_PORT |= (1<<RE_PIN);
 
-        // send buffer
-        serial.write(bufOut, lengthOut);
+    // send buffer
+    serial.write(bufOut, lengthOut);
 
-        // wait for the transmission of outgoing data
-        // to complete and then set rs485 control pin to read
-        // [ on SoftwareSerial use delay ? ]
-        serial.flush();
-        digitalWrite(ctrlPin, LOW);
-    } else {
-        // just send the buffer.
-        serial.write(bufOut, lengthOut);
-    }
+    // wait for the transmission of outgoing data
+    // to complete and then set rs485 control pin to read
+    // [ on SoftwareSerial use delay ? ]
+    serial.flush();
+    RE_PORT &= ~(1<<RE_PIN);
 
     return lengthOut;
 }
@@ -395,7 +379,8 @@ int Modbus::poll() {
  * @param offset the coil offset from first coil in this buffer.
  * @return the coil state from buffer (true / false)
  */
-int Modbus::readCoilFromBuffer(int offset) {
+int Modbus::readCoilFromBuffer(int offset) 
+{
     if (bufIn[1] == FC_WRITE_COIL) {
        assert(offset == 0);
        return word(bufIn[4], bufIn[5]) == COIL_ON;
@@ -415,7 +400,8 @@ int Modbus::readCoilFromBuffer(int offset) {
  * @param offset the register offset from first register in this buffer.
  * @return the register value from buffer.
  */
-uint16_t Modbus::readRegisterFromBuffer(int offset) {
+uint16_t Modbus::readRegisterFromBuffer(int offset) 
+{
     if (bufIn[1] == FC_WRITE_REGISTER) {
        assert(offset == 0);
        return word(bufIn[4], bufIn[5]);
@@ -434,7 +420,8 @@ uint16_t Modbus::readRegisterFromBuffer(int offset) {
  * @param offset the coil offset from first coil in this buffer.
  * @param state the coil state to write into buffer (true / false)
  */
-void Modbus::writeCoilToBuffer(int offset, int state) {
+void Modbus::writeCoilToBuffer(int offset, int state) 
+{
     int address = 3 + offset / 8;
     int bit = offset % 8;
 
@@ -467,7 +454,8 @@ void Modbus::writeRegisterToBuffer(int offset, uint16_t value) {
  * @return STATUS_OK in case of success, STATUS_ILLEGAL_DATA_ADDRESS
  *      if data doesn't fit in buffer
  */
-uint8_t Modbus::writeStringToBuffer(int offset, uint8_t *str, uint8_t length) {
+uint8_t Modbus::writeStringToBuffer(int offset, uint8_t *str, uint8_t length)
+ {
     int address = 3 + offset * 2;
 
     // check string length.
@@ -476,4 +464,9 @@ uint8_t Modbus::writeStringToBuffer(int offset, uint8_t *str, uint8_t length) {
 
     memcpy(bufOut + address, str, length);
     return STATUS_OK;
+}
+
+void Modbus::setUnitId(uint8_t _unitID)
+{
+	m_unitID = _unitID;
 }
